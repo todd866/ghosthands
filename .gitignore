@@ -1,5 +1,7 @@
+.venv/
+*.egg-info/
 __pycache__/
-*.pyc
+*.py[cod]
 gh-runs/
 *.env
 .DS_Store

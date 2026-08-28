@@ -1,14 +1,11 @@
-# code.py — AppSpace Pico HID actuator (RP2040 / CircuitPython).
+# code.py — ghosthands HID actuator (RP2040 / CircuitPython).
 #
 # The dumb, reliable end of the "brain drives the real apps" rig:
-#   the host machine's brain  --(newline-delimited JSON over usb_cdc.data)-->  THIS Pico
+#   the host machine's brain  --(newline-delimited JSON over one USB CDC port)--> THIS board
 #   THIS Pico        --(real USB HID reports, back into the host machine)---->  the OS/apps
 #
-# The input arrives as genuine external USB HID: no OS-level synthetic-event
-# fingerprint for platforms to detect. The command channel (usb_cdc.data) is a
-# separate serial pipe apps can't see. Human realism (eased cursor arcs, keystroke
-# jitter, backspace corrections) is synthesized HERE, in firmware, so a single
-# high-level command from the brain lands as human-looking input.
+# The input arrives as external USB HID. This avoids depending on browser DOM or
+# accessibility APIs, but applications may still identify automated behaviour.
 #
 # CONTRACT: one JSON object per line in; exactly one JSON ack line out per command.
 # The brain SHOULD wait for the ack before sending the next command (request/reply).
@@ -26,7 +23,7 @@
 # Optional "id" on any command is echoed back in the ack for correlation.
 #
 # Requires (copy into CIRCUITPY:/lib/):  adafruit_hid/  (keyboard, keycode, layout)
-# Requires boot.py from this folder (builds the composite HID + usb_cdc.data).
+# Requires boot.py from this folder (builds the composite HID + one CDC channel).
 
 import json
 import math
@@ -36,6 +33,7 @@ import time
 
 import usb_cdc
 import usb_hid
+import board
 
 from adafruit_hid.keyboard import Keyboard
 from adafruit_hid.keycode import Keycode
@@ -60,7 +58,7 @@ KEY_TAP = (0.02, 0.05)          # press->release dwell for a single key/chord
 TYPE_DELAY = (0.035, 0.14)      # base inter-keystroke delay
 TYPE_WORDPAUSE = (0.12, 0.4)    # occasional longer "thinking" pause
 TYPE_WORDPAUSE_PROB = 0.10      # chance of a longer pause after a keystroke
-TYPE_TYPO_PROB = 0.035          # chance a keystroke is a wrong-key + backspace + fix
+TYPE_TYPO_PROB = 0.0            # reliability first; set explicitly if simulated typos are wanted
 
 SCROLL_TICK = (1, 3)            # wheel units per emitted report
 SCROLL_SLEEP = (0.02, 0.055)    # delay between scroll reports
@@ -73,7 +71,6 @@ random.seed(time.monotonic_ns() & 0x7FFFFFFF)
 # ---------------------------------------------------------------------------------
 _led = None
 try:
-    import board
     import digitalio
     _led = digitalio.DigitalInOut(board.LED)
     _led.direction = digitalio.Direction.OUTPUT
@@ -258,6 +255,15 @@ def double_click():
     click("left")
 
 
+def release_all():
+    """Release every keyboard key and mouse button after an error or interruption."""
+    global _buttons
+    _buttons = 0
+    _send(_cx, _cy)
+    if kbd is not None:
+        kbd.release_all()
+
+
 def scroll(dy):
     dy = int(dy)
     if dy == 0:
@@ -294,8 +300,8 @@ def type_text(text):
             layout.write(ch)
             typed += 1
         except ValueError:
-            # char not representable on a US layout (emoji, smart quotes, …) — skip it
-            continue
+            # Never silently corrupt exact form input.
+            raise ValueError("character not supported by US keyboard layout: %r" % ch)
         time.sleep(_rand(TYPE_DELAY))
         if random.random() < TYPE_WORDPAUSE_PROB:
             time.sleep(_rand(TYPE_WORDPAUSE))
@@ -403,6 +409,8 @@ def handle(cmd):
         except Exception:
             ndev = -1
         return {"cmd": "ping", "pong": True,
+                "protocol": 1,
+                "board_id": getattr(board, "board_id", "unknown"),
                 "kbd": kbd is not None,
                 "abs_mouse": abs_mouse is not None,
                 "setup_err": _setup_err,
@@ -445,6 +453,10 @@ def handle(cmd):
         n = self_test(cmd.get("text", "AppSpace Pico HID OK 01234"))
         return {"cmd": "selftest", "chars": n}
 
+    if "release_all" in cmd:
+        release_all()
+        return {"cmd": "release_all"}
+
     raise ValueError("no known action in command")
 
 
@@ -465,6 +477,10 @@ def process_line(line):
         _write_ack(result)
     except Exception as e:
         _blink(False)
+        try:
+            release_all()
+        except Exception:
+            pass
         _write_ack({"ok": False, "err": str(e), "id": cid})
 
 

@@ -19,7 +19,7 @@ Four moving parts, each swappable:
 to history → repeat, with per-step screenshots, a jsonl log, and money checkpoints.
 
 ### Notes
-- Browser navigation uses AppleScript (`set URL of front document`) rather than typing into the
-  address bar — it is far more reliable than HID-typing a URL.
+- Optional browser navigation uses AppleScript (`set URL of front document`) rather than typing
+  into the address bar. It is disabled unless `--allow-browser-navigation` is supplied.
 - Long `type` strings are chunked to ≤18 chars; the HID stack drops characters on long bursts.
 - Keyboard `pagedown`/arrows often scroll where a synthetic wheel event is ignored.

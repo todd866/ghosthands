@@ -1,4 +1,4 @@
-# boot.py — USB shaping for the AppSpace Pico HID actuator (RP2040 / CircuitPython).
+# boot.py — USB shaping for the ghosthands HID actuator (RP2040 / CircuitPython).
 #
 # WHY THIS FILE MUST BE boot.py (NOT code.py):
 #   The USB device descriptor is frozen the instant CircuitPython finishes running
@@ -6,33 +6,19 @@
 #   take effect here — calling them from code.py is a no-op because USB is already
 #   enumerated. This is the #1 gotcha of the whole rig.
 #
-# WHAT IT BUILDS (a single composite USB device that the host machine sees as ordinary
-# external hardware — electrically indistinguishable from a human at the keyboard):
+# WHAT IT BUILDS (a single composite USB device that the host sees as external hardware):
 #   1. HID keyboard (the standard boot keyboard).
 #   2. HID ABSOLUTE-positioning mouse (custom descriptor below): the brain commands
 #      screen coordinates directly in a 0..32767 logical range, plus 3 buttons and a
 #      wheel. Absolute (not relative) so "put the cursor at (x,y)" is one report.
-#   3. ONE usb_cdc DATA serial channel (console disabled) that the brain writes
-#      newline-delimited JSON commands into. The console REPL is intentionally OFF so
-#      exactly ONE /dev/tty.usbmodem* appears on the host machine — port detection is trivial.
+#   3. ONE usb_cdc CONSOLE serial channel that code.py uses for newline-delimited
+#      JSON commands. A single CDC interface keeps the RP2040 endpoint budget slim.
 #
-# Recovery note: if you ever need the REPL back to debug, flip CONSOLE below to True,
-# save, and the board re-enumerates with a second serial port (the REPL).
+# Recovery note: hold BOOT/BOOTSEL while connecting (or hold BOOT and tap RESET)
+# to mount the RPI-RP2 bootloader volume and replace the firmware.
 
 import usb_hid
 import usb_cdc
-import supervisor
-
-# Disguise the USB identity: the host should see an ordinary Logitech receiver
-# (the most common combo keyboard+mouse dongle on earth — same shape as this
-# device), NOT "Raspberry Pi". Must run in boot.py before USB comes up. Fail-open.
-try:
-    supervisor.set_usb_identification(
-        manufacturer="Logitech", product="USB Receiver", vid=0x046D, pid=0xC52B
-    )
-except Exception:
-    pass
-
 # usb_midi hogs USB endpoints we don't need. Disabling it guarantees endpoint budget
 # for KEYBOARD + absolute-mouse HID + the CDC data channel on the RP2040.
 try:
@@ -41,11 +27,10 @@ try:
 except Exception:
     pass
 
-CONSOLE = True  # DEBUG BRING-UP: REPL on so code.py tracebacks are visible (2nd tty)
-
-# Enable the command channel. console=False => single tty on the host = easy to find.
-# data=True adds the raw serial the brain talks to as usb_cdc.data in code.py.
-usb_cdc.enable(console=CONSOLE, data=False)  # slim: 1 CDC only (REPL) — fits RP2040 endpoints alongside keyboard+abs-mouse, keeps CIRCUITPY drive editable
+# Keep the upstream-tested single console CDC configuration until the compact-board
+# matrix has been bench-tested. code.py deliberately falls back to this console.
+# Hold BOOT/BOOTSEL while connecting the board to recover or re-flash it.
+usb_cdc.enable(console=True, data=False)
 
 # --- Custom ABSOLUTE mouse HID report descriptor -----------------------------------
 # Layout of one input report (report_id 4), 6 bytes total, in this exact order:

@@ -101,5 +101,9 @@ class Grounder:
         nums = re.findall(r'-?\d+', raw)
         if len(nums) >= 2:
             x, y = int(nums[0]), int(nums[1])
+            if not (0 <= x < w and 0 <= y < h):
+                raise RuntimeError("grounder coordinates outside screenshot: %d,%d for %dx%d" % (
+                    x, y, w, h
+                ))
             return x, y, (x / w, y / h), raw.strip()
         raise RuntimeError("grounder returned no coords: %r" % raw)

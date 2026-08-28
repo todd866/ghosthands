@@ -22,6 +22,8 @@ class Config:
     grounder_model = os.environ.get("GH_GROUNDER_MODEL", "bytedance/ui-tars-1.5-7b")
     frame          = os.environ.get("GH_FRAME", "/tmp/gh_frame.jpg")
     trigger        = os.environ.get("GH_TRIGGER", "/tmp/gh_capture_now")
-    pico_port      = os.environ.get("GH_PICO_PORT", "/dev/cu.usbmodem1101")
-    hands_backend  = os.environ.get("GH_HANDS", "pico")  # pico | dryrun
+    # Leave unset to auto-detect a CircuitPython/RP2040 serial device. Set
+    # GH_PICO_PORT when more than one compatible board is connected.
+    pico_port      = os.environ.get("GH_PICO_PORT") or None
+    hands_backend  = os.environ.get("GH_HANDS", "dryrun")  # pico | dryrun
     runs_dir       = os.environ.get("GH_RUNS_DIR", os.path.expanduser("~/gh-runs"))

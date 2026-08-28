@@ -1,27 +1,88 @@
-# Hands: build the USB-HID actuator
+# Hands: build the USB-HID actuator on macOS
 
-You need a **Raspberry Pi Pico** (RP2040, ~$4) flashed with CircuitPython + the firmware in
-`scripts/firmware/`. Once flashed and plugged into the machine you want to drive, it appears to
-that machine as an ordinary USB mouse + keyboard.
+Ghosthands needs an RP2040 board with native USB, flashed with CircuitPython and the firmware in
+`scripts/firmware/`. It then appears to macOS as a keyboard, absolute-position mouse, and one
+serial command port.
 
-## Flash it
-1. Unplug the Pico. Hold **BOOTSEL**, plug it in, release after ~2s → the `RPI-RP2` drive mounts.
-2. Run `scripts/reflash-pico.sh` — it drops `cp-pico-*.uf2`, waits for `CIRCUITPY`, copies
-   `boot.py` + `code.py` + `lib/`, and ejects.
-3. Replug normally. `ls /dev/cu.usbmodem*` should show one port.
+## Recommended USB-C boards
 
-## Wiring / firmware notes (learned the hard way)
-- **Slim USB config.** The RP2040 endpoint budget can't fit keyboard + absolute-mouse + two CDC +
-  mass-storage at once. `boot.py` runs `usb_cdc.enable(console=True, data=False)` — one CDC that
-  doubles as the command channel.
-- **CircuitPython has no `bytearray` slice-delete.** The serial read buffer is trimmed with
-  `_buf = _buf[nl+1:]` (reassign), never `del _buf[:nl+1]` (that raises on CircuitPython and
-  silently kills the loop after the first command).
-- **Editing in place doesn't work** while the custom HID is active — the `CIRCUITPY` drive drops.
-  Every firmware change is a BOOTSEL re-flash.
+| Target | Board | Size | Why choose it |
+|---|---|---:|---|
+| `qtpy-rp2040` | Adafruit QT Py RP2040 | 21.8 × 17.8 mm | Best documentation, 8 MB flash, separate BOOT and RESET buttons |
+| `xiao-rp2040` | Seeed Studio XIAO RP2040 | 21 × 17.8 mm | Smallest and least expensive polished option |
+| `pico` | Raspberry Pi Pico | 51 × 21 mm | Original upstream target; Micro-USB |
+
+Buy the board without headers. Use a short, flexible, **data-capable** USB-C-to-C cable rather
+than a rigid adapter: a rigid board hanging from a MacBook port creates an avoidable lever arm.
+A fitted snap case should leave BOOT/RESET accessible and should not place force on the USB-C
+socket.
+
+The compact USB-C targets use official board-specific CircuitPython builds and the same RP2040
+USB peripheral as the original Pico. They are supported by the installer, but should be treated
+as experimental until the composite keyboard + absolute mouse + CDC setup has been exercised on
+the physical board.
+
+## Install the host software
+
+From the repository root:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e .
+ghosthands --help
+```
+
+## Flash the exact board
+
+First inspect the plan; this does not touch a drive:
+
+```bash
+scripts/flash-board.sh qtpy-rp2040
+# or: scripts/flash-board.sh xiao-rp2040
+```
+
+Then run the write explicitly:
+
+```bash
+scripts/flash-board.sh qtpy-rp2040 --write
+```
+
+The script downloads the pinned CircuitPython 10.2.1 UF2 for that exact board, verifies its
+SHA-256 checksum, waits for the RP2040 boot volume, installs CircuitPython, copies only the
+ghosthands firmware, and ejects the drive. Do not use a Pico UF2 on a QT Py or XIAO.
+
+To enter the bootloader:
+
+- **QT Py:** hold BOOT, tap RESET, then release BOOT.
+- **XIAO:** hold **B**, tap **R**, then release **B**.
+- **Pico:** hold BOOTSEL while connecting the USB cable.
+
+After flashing, unplug and reconnect normally, then verify all interfaces:
+
+```bash
+ghosthands --doctor --ping
+```
+
+If more than one board is connected, select one explicitly:
+
+```bash
+ghosthands --doctor --ping --port /dev/cu.usbmodemXXXX
+```
+
+## Firmware notes
+
+- The RP2040 endpoint budget is kept to keyboard HID + absolute-mouse HID + one console CDC +
+  mass storage. `code.py` uses that one console as its JSON command channel.
+- The board retains its honest CircuitPython USB identity; the firmware does not spoof another
+  manufacturer's VID/PID.
+- Typing uses a US keyboard layout and rejects unsupported characters instead of silently
+  dropping them. Exact non-US/Unicode text needs a future layout or clipboard transport.
+- Hold BOOT/BOOTSEL during reset to recover from a bad firmware edit.
 
 ## Command protocol
-One JSON object per line over the serial port at 115200; one ack per command:
-`{"move":{"x":0..32767,"y":0..32767}}` (absolute), `{"click":"left"}`, `{"type":"..."}`,
-`{"key":["cmd","space"]}`, `{"scroll":n}`, `{"ping":1}`. Coordinates are absolute over a
-0..32767 grid; `ghosthands` maps screen fractions onto that, so it is resolution-independent.
+
+One JSON object per line over the serial port at 115200; one matching-ID acknowledgement per
+command: `{"move":{"x":0,"y":0}}`, `{"click":"left"}`, `{"type":"..."}`,
+`{"key":["cmd","space"]}`, `{"scroll":3}`, `{"ping":1}`, and `{"release_all":1}`.
+Coordinates use an absolute 0..32767 grid; ghosthands maps screenshot fractions onto that grid.
