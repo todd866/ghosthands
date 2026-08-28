@@ -2,6 +2,7 @@
 *.egg-info/
 __pycache__/
 *.py[cod]
+*.blend1
 gh-runs/
 *.env
 .DS_Store

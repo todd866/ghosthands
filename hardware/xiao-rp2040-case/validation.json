@@ -1,0 +1,41 @@
+{
+  "bottom": {
+    "dimensions_mm": [
+      22.7,
+      25.0,
+      6.0
+    ],
+    "vertices": 596,
+    "edges": 1782,
+    "faces": 1188,
+    "non_manifold_edges": 0,
+    "boundary_edges": 0,
+    "volume_mm3": 1165.959
+  },
+  "lid": {
+    "dimensions_mm": [
+      24.8,
+      28.0,
+      3.596
+    ],
+    "vertices": 811,
+    "edges": 2445,
+    "faces": 1630,
+    "non_manifold_edges": 0,
+    "boundary_edges": 0,
+    "volume_mm3": 930.569
+  },
+  "print_plate": {
+    "dimensions_mm": [
+      51.75,
+      28.0,
+      6.0
+    ],
+    "vertices": 1407,
+    "edges": 4227,
+    "faces": 2818,
+    "non_manifold_edges": 0,
+    "boundary_edges": 0,
+    "volume_mm3": 2096.527
+  }
+}

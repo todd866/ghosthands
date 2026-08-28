@@ -93,6 +93,9 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "bad"):
                 hands.PicoHands("/dev/fake").ping()
 
+    def test_non_typing_timeout_covers_a_worst_case_firmware_move(self):
+        self.assertGreaterEqual(hands._NON_TYPING_COMMAND_TIMEOUT_SECONDS, 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import unittest
 
@@ -25,6 +26,31 @@ class DistributionTests(unittest.TestCase):
         self.assertNotIn("Logitech", boot)
         self.assertIn("TYPE_TYPO_PROB = 0.0", code)
         self.assertIn("usb_cdc.enable(console=True, data=False)", boot)
+
+    def test_legacy_pico_wrapper_forwards_the_write_gate(self):
+        wrapper = (ROOT / "scripts" / "reflash-pico.sh").read_text()
+        self.assertIn('flash-board.sh" pico "$@"', wrapper)
+
+    def test_xiao_case_assets_are_shipped_and_manifold(self):
+        case = ROOT / "hardware" / "xiao-rp2040-case"
+        expected = (
+            "README.md",
+            "build_case.py",
+            "validate_case.py",
+            "ghosthands_xiao_rp2040_bottom.stl",
+            "ghosthands_xiao_rp2040_lid.stl",
+            "ghosthands_xiao_rp2040_case_print_plate.stl",
+            "ghosthands_xiao_rp2040_case.blend",
+            "case_parts_preview.png",
+            "case_lid_underside_preview.png",
+            "validation.json",
+        )
+        for filename in expected:
+            self.assertTrue((case / filename).is_file(), filename)
+        report = json.loads((case / "validation.json").read_text())
+        for part in ("bottom", "lid", "print_plate"):
+            self.assertEqual(report[part]["non_manifold_edges"], 0)
+            self.assertEqual(report[part]["boundary_edges"], 0)
 
 
 if __name__ == "__main__":

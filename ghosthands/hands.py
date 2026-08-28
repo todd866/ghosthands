@@ -14,6 +14,7 @@ from .config import Config
 
 _BOARD_WORDS = ("circuitpython", "rp2040", "qt py", "xiao", "adafruit", "seeed", "raspberry")
 _BOARD_VIDS = {0x239A, 0x2E8A}  # Adafruit/CircuitPython and Raspberry Pi
+_NON_TYPING_COMMAND_TIMEOUT_SECONDS = 3.0
 
 
 def serial_ports():
@@ -107,10 +108,12 @@ class PicoHands(Hands):
             p.reset_input_buffer()
             p.write((json.dumps(request) + "\n").encode())
             p.flush()
-            # typing needs per-char time or chars drop; clicks/keys are quick
+            # Typing needs per-char time or chars drop. A full-screen move can
+            # take about 1.35 seconds at the firmware's worst-case interpolation
+            # settings, so all other commands retain a conservative margin.
             # Firmware can pause up to 0.54s per character (typing jitter plus a
             # word pause), so size the deadline to the documented worst case.
-            deadline_seconds = 2.0 + 0.6 * len(str(request.get("type", ""))) if "type" in request else 1.5
+            deadline_seconds = 2.0 + 0.6 * len(str(request.get("type", ""))) if "type" in request else _NON_TYPING_COMMAND_TIMEOUT_SECONDS
             deadline = time.monotonic() + deadline_seconds
             while time.monotonic() < deadline:
                 line = p.readline().decode("utf-8", "ignore").strip()

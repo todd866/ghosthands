@@ -88,6 +88,7 @@ ghosthands/        core library  (config, eyes, hands, brain, agent)
 run.py             CLI
 examples/          trace_square.py, streamon3_subscriptions.py
 scripts/           screenfeed.sh (the eyes) + firmware/ (the hands)
+hardware/          printable XIAO RP2040 enclosure + reproducible CAD source
 docs/              HARDWARE.md, ARCHITECTURE.md
 ```
 

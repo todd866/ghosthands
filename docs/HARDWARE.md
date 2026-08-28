@@ -22,6 +22,25 @@ USB peripheral as the original Pico. They are supported by the installer, but sh
 as experimental until the composite keyboard + absolute mouse + CDC setup has been exercised on
 the physical board.
 
+## Compact XIAO enclosure
+
+`hardware/xiao-rp2040-case/` contains an original CC0 enclosure for a bare, headerless Seeed
+Studio XIAO RP2040. It is approximately 28 × 24.8 × 7.2 mm assembled and provides:
+
+- a wide USB-C opening;
+- access to BOOT and RESET;
+- an RGB LED window;
+- hidden side detents for cap retention; and
+- support-free print orientation for a 0.4 mm FDM nozzle.
+
+Upload `ghosthands_xiao_rp2040_case_print_plate.stl` for a one-job print containing both parts.
+The directory also includes the separate part STLs, Blender source, generator, validation script,
+mesh report, and rendered previews. The generated meshes are watertight and manifold, but this is
+a first-print design until it has been physically test-fitted to a board.
+
+The suggested bureau settings are matte PLA, 0.16–0.20 mm layers, three walls, and 20% infill.
+See the enclosure README for fit tolerances and the CC0 dedication.
+
 ## Install the host software
 
 From the repository root:
@@ -51,6 +70,12 @@ scripts/flash-board.sh qtpy-rp2040 --write
 The script downloads the pinned CircuitPython 10.2.1 UF2 for that exact board, verifies its
 SHA-256 checksum, waits for the RP2040 boot volume, installs CircuitPython, copies only the
 ghosthands firmware, and ejects the drive. Do not use a Pico UF2 on a QT Py or XIAO.
+
+The legacy Pico wrapper uses the same explicit write gate:
+
+```bash
+scripts/reflash-pico.sh --write
+```
 
 To enter the bootloader:
 

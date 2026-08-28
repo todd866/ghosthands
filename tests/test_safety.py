@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from ghosthands import cli
 from ghosthands.agent import Agent, safari_navigate
 from ghosthands.config import Config
 
@@ -22,6 +23,13 @@ class RecordingHands:
 class SafetyTests(unittest.TestCase):
     def test_default_backend_is_dryrun(self):
         self.assertEqual(Config.hands_backend, "dryrun")
+
+    def test_live_hid_requires_the_explicit_live_flag(self):
+        with mock.patch.object(cli.Config, "api_key", "test-key"), \
+                mock.patch.object(cli, "make_hands") as make_hands:
+            result = cli.main(["--hands", "pico", "--goal", "do nothing"])
+        self.assertEqual(result, 2)
+        make_hands.assert_not_called()
 
     def test_safari_rejects_non_web_url(self):
         with self.assertRaises(ValueError):
