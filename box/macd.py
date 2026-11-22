@@ -16,9 +16,11 @@ so `run.py --target box --box-url http://127.0.0.1:8790` drives it unchanged.
 macOS asks once (the owner, on the Mac) for Screen Recording and Accessibility for the app that
 runs this (GhostMirror.app), and for permission to control Google Chrome.
 
-Input is confined to the page: keys, typing and clicks only while Google Chrome is frontmost,
-clicks only inside its page area, and only the key chords a web page needs (no Spotlight, app
-switching, address bar or DevTools), so a page cannot steer the agent into the rest of the Mac.
+Input is confined to the page: only while Google Chrome is frontmost; clicks and scrolls only
+where the Accessibility API says the element under the pointer is inside Chrome's web content
+(AXWebArea), left button only; typing and keys only while keyboard focus is inside it (re-checked
+every 8 characters, 2000 at most); and only the key chords a page needs (no clipboard, Spotlight,
+app switching, address bar, find bar or DevTools). Without the Accessibility grant, no input.
 
 Listens on 127.0.0.1 only; BOX_TOKEN required (as boxd). Reach it from another Mac over ssh -L.
 """
@@ -79,6 +81,117 @@ _cg.CGEventCreateScrollWheelEvent2.restype = ctypes.c_void_p
 _cg.CGEventCreateScrollWheelEvent2.argtypes = [ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
                                                 ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]
 _cf.CFRelease.argtypes = [ctypes.c_void_p]
+
+# Accessibility (AX) API: which element is under a point, which has keyboard focus, and whether
+# it sits inside Chrome's web content (an AXWebArea). Needs the Accessibility grant; without it
+# every call fails and input is refused (fail closed).
+_ax = _cg
+_ax.AXUIElementCreateSystemWide.restype = ctypes.c_void_p
+_ax.AXUIElementCopyAttributeValue.restype = ctypes.c_int32
+_ax.AXUIElementCopyAttributeValue.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+_ax.AXUIElementCopyElementAtPosition.restype = ctypes.c_int32
+_ax.AXUIElementCopyElementAtPosition.argtypes = [ctypes.c_void_p, ctypes.c_float, ctypes.c_float, ctypes.POINTER(ctypes.c_void_p)]
+_ax.AXUIElementGetPid.restype = ctypes.c_int32
+_ax.AXUIElementGetPid.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int32)]
+_ax.AXIsProcessTrusted.restype = ctypes.c_bool
+_cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+_cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+_cf.CFStringGetCString.restype = ctypes.c_bool
+_cf.CFStringGetCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32]
+_cf.CFGetTypeID.restype = ctypes.c_ulong
+_cf.CFGetTypeID.argtypes = [ctypes.c_void_p]
+_cf.CFStringGetTypeID.restype = ctypes.c_ulong
+_UTF8 = 0x08000100
+
+
+def _cfstr(s):
+    return _cf.CFStringCreateWithCString(None, s.encode(), _UTF8)
+
+
+_A_ROLE, _A_PARENT, _A_FOCUSED = _cfstr("AXRole"), _cfstr("AXParent"), _cfstr("AXFocusedUIElement")
+
+
+def _attr(el, name):
+    out = ctypes.c_void_p()
+    if _ax.AXUIElementCopyAttributeValue(el, name, ctypes.byref(out)) != 0 or not out.value:
+        return None
+    return out.value
+
+
+def _role(el):
+    v = _attr(el, _A_ROLE)
+    if not v:
+        return ""
+    buf = ctypes.create_string_buffer(128)
+    ok = _cf.CFGetTypeID(v) == _cf.CFStringGetTypeID() and _cf.CFStringGetCString(v, buf, 128, _UTF8)
+    _cf.CFRelease(v)
+    return buf.value.decode() if ok else ""
+
+
+def _pid(el):
+    p = ctypes.c_int32(0)
+    return p.value if _ax.AXUIElementGetPid(el, ctypes.byref(p)) == 0 else -1
+
+
+def _in_web_area(el):
+    """True when el, or an ancestor within 40 levels, is an AXWebArea."""
+    held, cur, found = [], el, False
+    for _ in range(40):
+        if not cur:
+            break
+        if _role(cur) == "AXWebArea":
+            found = True
+            break
+        nxt = _attr(cur, _A_PARENT)
+        if nxt:
+            held.append(nxt)
+        cur = nxt
+    for h in held:
+        _cf.CFRelease(h)
+    return found
+
+
+def chrome_pids():
+    out = subprocess.run(["pgrep", "-x", "Google Chrome"], capture_output=True, text=True).stdout.split()
+    return {int(p) for p in out if p.isdigit()}
+
+
+def require_web_point(x, y):
+    """The element under (x, y) must belong to Chrome and sit inside its web content."""
+    if not _ax.AXIsProcessTrusted():
+        raise PermissionError("refused: no Accessibility grant, so the target cannot be checked")
+    sw = _ax.AXUIElementCreateSystemWide()
+    el = ctypes.c_void_p()
+    try:
+        if _ax.AXUIElementCopyElementAtPosition(sw, float(x), float(y), ctypes.byref(el)) != 0 or not el.value:
+            raise PermissionError("refused: nothing to check at (%d,%d)" % (x, y))
+        try:
+            if _pid(el.value) not in chrome_pids() or not _in_web_area(el.value):
+                raise PermissionError("refused: (%d,%d) is not inside Chrome's web page" % (x, y))
+        finally:
+            _cf.CFRelease(el.value)
+    finally:
+        _cf.CFRelease(sw)
+
+
+def require_web_focus():
+    """Keyboard focus must be inside Chrome's web content (not the address bar, DevTools, the
+    find bar, a dialog or another app)."""
+    if not _ax.AXIsProcessTrusted():
+        raise PermissionError("refused: no Accessibility grant, so focus cannot be checked")
+    sw = _ax.AXUIElementCreateSystemWide()
+    try:
+        f = _attr(sw, _A_FOCUSED)
+        if not f:
+            raise PermissionError("refused: no focused element")
+        try:
+            if _pid(f) not in chrome_pids() or not _in_web_area(f):
+                raise PermissionError("refused: keyboard focus is not in Chrome's web page")
+        finally:
+            _cf.CFRelease(f)
+    finally:
+        _cf.CFRelease(sw)
+
 
 HID = 0                      # kCGHIDEventTap: events enter where hardware events do
 MOVED, LDOWN, LUP, RDOWN, RUP, LDRAG = 5, 1, 2, 3, 4, 6
@@ -227,14 +340,15 @@ def type_text(text):
 CHROME_BUNDLE = "com.google.Chrome"
 TOOLBAR_PT = int(os.environ.get("MACD_TOOLBAR_PT", "90"))     # tab strip + toolbar, in points
 
-# chords allowed on a page (modifier set, key); everything else is refused
+# chords allowed on a page (modifier set, key); everything else is refused. No cmd+v/x/c: the
+# clipboard is the owner's (text goes in with `type`); no cmd+f: the find bar is not the page.
 _ALLOWED_CHORDS = {
     (frozenset(), k) for k in ("return", "enter", "tab", "escape", "esc", "delete", "backspace",
                                 "forwarddelete", "del", "space", "up", "down", "left", "right",
                                 "arrow-up", "arrow-down", "arrow-left", "arrow-right", "home", "end",
                                 "pageup", "pagedown", "pgup", "pgdn")
 } | {(frozenset({"shift"}), k) for k in ("tab", "return", "up", "down", "left", "right", "home", "end")} \
-  | {(frozenset({"cmd"}), k) for k in ("a", "c", "v", "x", "z", "f", "left", "right", "up", "down")} \
+  | {(frozenset({"cmd"}), k) for k in ("a", "z", "left", "right", "up", "down")} \
   | {(frozenset({"cmd", "shift"}), "z"), (frozenset({"alt"}), "left"), (frozenset({"alt"}), "right"),
      (frozenset({"alt"}), "delete"), (frozenset({"alt"}), "backspace")}
 _CANON = {"command": "cmd", "meta": "cmd", "super": "cmd", "control": "ctrl", "option": "alt"}
@@ -376,22 +490,33 @@ class Handler(BaseHTTPRequestHandler):
                 if verb in ("move", "click", "type", "key", "scroll"):
                     require_chrome()
                 if verb == "move":
+                    require_in_page(req["x"], req["y"])
                     human_move(req["x"], req["y"])
                 elif verb == "click":
+                    if req.get("button", "left") != "left":
+                        raise PermissionError("refused: left clicks only (a context menu reaches DevTools)")
                     if "x" in req and "y" in req:
                         require_in_page(req["x"], req["y"])
                         human_move(req["x"], req["y"]); time.sleep(_rand(0.04, 0.12))
                     x, y = pointer()
                     require_in_page(x, y)
-                    click(req.get("button", "left"), bool(req.get("double")))
+                    require_web_point(x, y)
+                    click("left", bool(req.get("double")))
                 elif verb == "type":
-                    type_text(str(req.get("text", "")))
+                    text = str(req.get("text", ""))
+                    if len(text) > 2000:
+                        raise PermissionError("refused: more than 2000 characters")
+                    for i in range(0, len(text), 8):     # re-check before every short burst
+                        require_chrome(); require_web_focus()
+                        type_text(text[i:i + 8])
                 elif verb == "key":
                     check_chord(req.get("keys", ""))
+                    require_web_focus()
                     key(req.get("keys", ""))
                 elif verb == "scroll":
                     x, y = pointer()
                     require_in_page(x, y)
+                    require_web_point(x, y)
                     scroll(req.get("amount", 0))
                 elif verb == "navigate":
                     navigate(req.get("url", ""))
