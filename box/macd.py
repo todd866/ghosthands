@@ -16,6 +16,10 @@ so `run.py --target box --box-url http://127.0.0.1:8790` drives it unchanged.
 macOS asks once (the owner, on the Mac) for Screen Recording and Accessibility for the app that
 runs this (GhostMirror.app), and for permission to control Google Chrome.
 
+Input is confined to the page: keys, typing and clicks only while Google Chrome is frontmost,
+clicks only inside its page area, and only the key chords a web page needs (no Spotlight, app
+switching, address bar or DevTools), so a page cannot steer the agent into the rest of the Mac.
+
 Listens on 127.0.0.1 only; BOX_TOKEN required (as boxd). Reach it from another Mac over ssh -L.
 """
 import ctypes
@@ -34,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 TOKEN = os.environ.get("BOX_TOKEN", "")
-PORT = int(os.environ.get("BOX_PORT", "8790"))
+PORT = int(os.environ.get("BOX_PORT", "47811"))
 if len(TOKEN) < 16:
     sys.exit("macd: BOX_TOKEN (16+ chars) is required")
 
@@ -214,6 +218,65 @@ def type_text(text):
         time.sleep(_rand(0.035, 0.11) + (_rand(0.08, 0.25) if ch in " .,@/" else 0))
 
 
+# ---------------------------------------------------------------- confinement
+# On a real Mac the keyboard and mouse reach the owner's whole account, not a container. A page
+# that talks the planner into "press cmd+space, type Terminal, ..." must get nowhere, so input is
+# confined in code: only while Google Chrome is the frontmost app, clicks only inside its page
+# area, and only key chords a person uses on a web page.
+
+CHROME_BUNDLE = "com.google.Chrome"
+TOOLBAR_PT = int(os.environ.get("MACD_TOOLBAR_PT", "90"))     # tab strip + toolbar, in points
+
+# chords allowed on a page (modifier set, key); everything else is refused
+_ALLOWED_CHORDS = {
+    (frozenset(), k) for k in ("return", "enter", "tab", "escape", "esc", "delete", "backspace",
+                                "forwarddelete", "del", "space", "up", "down", "left", "right",
+                                "arrow-up", "arrow-down", "arrow-left", "arrow-right", "home", "end",
+                                "pageup", "pagedown", "pgup", "pgdn")
+} | {(frozenset({"shift"}), k) for k in ("tab", "return", "up", "down", "left", "right", "home", "end")} \
+  | {(frozenset({"cmd"}), k) for k in ("a", "c", "v", "x", "z", "f", "left", "right", "up", "down")} \
+  | {(frozenset({"cmd", "shift"}), "z"), (frozenset({"alt"}), "left"), (frozenset({"alt"}), "right"),
+     (frozenset({"alt"}), "delete"), (frozenset({"alt"}), "backspace")}
+_CANON = {"command": "cmd", "meta": "cmd", "super": "cmd", "control": "ctrl", "option": "alt"}
+
+
+def frontmost_bundle():
+    """Bundle id of the frontmost app, from lsappinfo (needs no permission)."""
+    asn = subprocess.run(["lsappinfo", "front"], capture_output=True, text=True, timeout=5).stdout.strip()
+    out = subprocess.run(["lsappinfo", "info", "-only", "bundleid", asn],
+                         capture_output=True, text=True, timeout=5).stdout
+    import re
+    m = re.search(r'(?:bundleID|"CFBundleIdentifier")\s*=\s*"([^"]*)"', out)
+    return m.group(1) if m else ""
+
+
+def require_chrome():
+    b = frontmost_bundle()
+    if b != CHROME_BUNDLE:
+        raise PermissionError("refused: input goes only to Google Chrome; the front app is %s" % (b or "?"))
+
+
+def chrome_page_rect():
+    """Chrome's front window content area (points): its bounds minus the tab strip and toolbar."""
+    out = _osascript(['tell application "Google Chrome" to get bounds of front window'])
+    l, t, r, b = [int(v) for v in out.replace(" ", "").split(",")]
+    return l, t + TOOLBAR_PT, r, b
+
+
+def require_in_page(x, y):
+    l, t, r, b = chrome_page_rect()
+    if not (l <= x < r and t <= y < b):
+        raise PermissionError("refused: (%d,%d) is outside Chrome's page area" % (x, y))
+
+
+def check_chord(keys):
+    parts = [p.strip().lower() for p in (keys if isinstance(keys, (list, tuple)) else str(keys).replace(",", "+").split("+")) if p.strip()]
+    mods = frozenset(_CANON.get(p, p) for p in parts[:-1])
+    k = parts[-1] if parts else ""
+    if (mods, k) not in _ALLOWED_CHORDS:
+        raise PermissionError("refused: %r is not a key a page needs" % "+".join(parts))
+
+
 # ---------------------------------------------------------------- Chrome (AppleScript)
 
 def _osascript(lines, *args):
@@ -310,17 +373,25 @@ class Handler(BaseHTTPRequestHandler):
                     return self._reply(200, {"done": [], "pending": []})
                 if verb == "url":
                     return self._reply(200, {"url": current_url()})
+                if verb in ("move", "click", "type", "key", "scroll"):
+                    require_chrome()
                 if verb == "move":
                     human_move(req["x"], req["y"])
                 elif verb == "click":
                     if "x" in req and "y" in req:
+                        require_in_page(req["x"], req["y"])
                         human_move(req["x"], req["y"]); time.sleep(_rand(0.04, 0.12))
+                    x, y = pointer()
+                    require_in_page(x, y)
                     click(req.get("button", "left"), bool(req.get("double")))
                 elif verb == "type":
                     type_text(str(req.get("text", "")))
                 elif verb == "key":
+                    check_chord(req.get("keys", ""))
                     key(req.get("keys", ""))
                 elif verb == "scroll":
+                    x, y = pointer()
+                    require_in_page(x, y)
                     scroll(req.get("amount", 0))
                 elif verb == "navigate":
                     navigate(req.get("url", ""))
