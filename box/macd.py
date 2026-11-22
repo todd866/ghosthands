@@ -5,7 +5,7 @@
 Same HTTP API as box/boxd.py (status, screenshot, move, click, type, key, scroll, navigate, url),
 so `run.py --target box --box-url http://127.0.0.1:8790` drives it unchanged.
 
-  eyes      screencapture of the main display (JPEG)
+  eyes      screencapture of Chrome's front window only (JPEG); coordinates are window-relative
   hands     CoreGraphics events (ctypes, no extra packages): curved, eased pointer paths, per-key
             typing rhythm, like box/boxd.py
   navigate  Google Chrome's AppleScript interface (set URL of the active tab): no keystrokes to
@@ -381,11 +381,24 @@ def require_chrome():
         raise PermissionError("refused: input goes only to Google Chrome; the front app is %s" % (b or "?"))
 
 
-def chrome_page_rect():
-    """Chrome's front window content area (points): its bounds minus the tab strip and toolbar."""
+def chrome_window():
+    """Chrome's front window bounds (l, t, r, b) in screen points."""
     out = _osascript(['tell application "Google Chrome" to get bounds of front window'])
     l, t, r, b = [int(v) for v in out.replace(" ", "").split(",")]
+    return l, t, r, b
+
+
+def chrome_page_rect():
+    """Chrome's front window content area (points): its bounds minus the tab strip and toolbar."""
+    l, t, r, b = chrome_window()
     return l, t + TOOLBAR_PT, r, b
+
+
+def bring_chrome_forward():
+    if frontmost_bundle() != CHROME_BUNDLE:
+        _osascript(['tell application "Google Chrome"', "activate",
+                    "if (count of windows) = 0 then make new window", "end tell"])
+        time.sleep(0.6)
 
 
 def require_in_page(x, y):
@@ -435,14 +448,20 @@ def current_url():
 # ---------------------------------------------------------------- screen
 
 def screenshot():
+    """Only Chrome's front window, never the rest of the screen (other apps' windows hold the
+    owner's private things, and every frame goes to the planning model). Coordinates the agent
+    sends are relative to this image, i.e. to the window."""
+    bring_chrome_forward()
+    require_chrome()
+    l, t, r, b = chrome_window()
+    w, h = r - l, b - t
     fd, path = tempfile.mkstemp(suffix=".jpg"); os.close(fd)
     try:
-        r = subprocess.run(["screencapture", "-x", "-m", "-t", "jpg", path], capture_output=True, timeout=20)
-        if r.returncode != 0 or os.path.getsize(path) < 2000:
+        cmd = ["screencapture", "-x", "-t", "jpg", "-R", "%d,%d,%d,%d" % (l, t, w, h), path]
+        r_ = subprocess.run(cmd, capture_output=True, timeout=20)
+        if r_.returncode != 0 or os.path.getsize(path) < 2000:
             raise RuntimeError("screen capture failed (Screen Recording not granted, or the display is asleep)")
-        # Retina pixels -> points, so a grounded fraction maps straight to a point
-        w, h = screen_points()
-        subprocess.run(["sips", "-z", str(h), str(w), path], capture_output=True, timeout=20)
+        subprocess.run(["sips", "-z", str(h), str(w), path], capture_output=True, timeout=20)   # pixels -> points
         with open(path, "rb") as f:
             return f.read(), w, h
     finally:
@@ -511,8 +530,12 @@ class Handler(BaseHTTPRequestHandler):
             verb = req.get("verb")
             with _lock:
                 if verb == "status":
-                    w, h = screen_points(); x, y = pointer()
-                    return self._reply(200, {"width": w, "height": h, "x": int(x), "y": int(y),
+                    try:
+                        l, t, r, b = chrome_window(); w, h = r - l, b - t
+                    except Exception:
+                        l, t = 0, 0; w, h = screen_points()
+                    x, y = pointer()
+                    return self._reply(200, {"width": w, "height": h, "x": int(x - l), "y": int(y - t),
                                              "accessibility": bool(_ax.AXIsProcessTrusted()),
                                              "screen_recording": screen_recording_granted(),
                                              "locked": screen_locked(), "front": frontmost_bundle(),
@@ -528,6 +551,9 @@ class Handler(BaseHTTPRequestHandler):
                     return self._reply(200, {"url": current_url()})
                 if verb in ("move", "click", "type", "key", "scroll"):
                     require_chrome()
+                if verb in ("move", "click") and "x" in req and "y" in req:
+                    l, t, _, _ = chrome_window()          # agent coordinates are window-relative
+                    req["x"], req["y"] = float(req["x"]) + l, float(req["y"]) + t
                 if verb == "move":
                     require_in_page(req["x"], req["y"])
                     human_move(req["x"], req["y"])
