@@ -441,6 +441,30 @@ def screenshot():
             pass
 
 
+_cg.CGPreflightScreenCaptureAccess.restype = ctypes.c_bool
+
+
+def screen_recording_granted():
+    return bool(_cg.CGPreflightScreenCaptureAccess())
+
+
+def screen_locked():
+    out = subprocess.run(["ioreg", "-n", "Root", "-d1"], capture_output=True, text=True, timeout=5).stdout
+    return '"CGSSessionScreenIsLocked"=Yes' in out
+
+
+# MACD_KEEP_AWAKE=1: hold a display-awake assertion while this runs, so macOS never reaches the
+# idle auto-lock and jobs find an unlocked desktop. The owner's choice: an unlocked Mac at home
+# is usable by anyone in reach of it. Off by default.
+KEEP_AWAKE = os.environ.get("MACD_KEEP_AWAKE") == "1"
+
+
+def keep_awake():
+    if KEEP_AWAKE:
+        subprocess.Popen(["caffeinate", "-d", "-i", "-w", str(os.getpid())],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 # ---------------------------------------------------------------- http (as boxd)
 
 class Handler(BaseHTTPRequestHandler):
@@ -477,7 +501,11 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 if verb == "status":
                     w, h = screen_points(); x, y = pointer()
-                    return self._reply(200, {"width": w, "height": h, "x": int(x), "y": int(y)})
+                    return self._reply(200, {"width": w, "height": h, "x": int(x), "y": int(y),
+                                             "accessibility": bool(_ax.AXIsProcessTrusted()),
+                                             "screen_recording": screen_recording_granted(),
+                                             "locked": screen_locked(), "front": frontmost_bundle(),
+                                             "keep_awake": KEEP_AWAKE})
                 if verb == "screenshot":
                     data, w, h = screenshot()
                     return self._reply(200, data, "image/jpeg", {"X-Width": w, "X-Height": h})
@@ -530,5 +558,6 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
+    keep_awake()
     print("macd on 127.0.0.1:%d, screen %dx%d points" % ((PORT,) + screen_points()), flush=True)
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
