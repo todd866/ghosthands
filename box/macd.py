@@ -422,7 +422,7 @@ def check_url(url):
 
 
 def navigate(url):
-    _osascript(["on run argv", 'tell application "Google Chrome"',
+    _osascript(["on run argv", 'tell application "Google Chrome"', "activate",
                 "if (count of windows) = 0 then make new window",
                 "set URL of active tab of front window to item 1 of argv", "end tell", "end run"],
                check_url(url))
