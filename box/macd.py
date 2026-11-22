@@ -39,6 +39,17 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
+# Settings may also come from ~/.config/ghostmirror/env (MACD_* lines), so changing one never
+# means rebuilding the launcher app (a new ad-hoc signature would drop the owner's grants).
+_ENV_FILE = os.path.expanduser("~/.config/ghostmirror/env")
+try:
+    for _line in open(_ENV_FILE):
+        _k, _, _v = _line.strip().partition("=")
+        if _k.startswith("MACD_") and _k not in os.environ:
+            os.environ[_k] = _v.strip().strip("'\"")
+except OSError:
+    pass
+
 TOKEN = os.environ.get("BOX_TOKEN", "")
 PORT = int(os.environ.get("BOX_PORT", "47811"))
 if len(TOKEN) < 16:
